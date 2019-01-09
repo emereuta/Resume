@@ -1,0 +1,101 @@
+# Web scraper based on BeautifulSoup library
+# Imagine we are in Laboratory tests business and we would like to track competitors' pricing for lab tests
+# My scrapper first gets all category links (tests are grouped into categories) from homepage
+# Then, for each category link we iterate over HTML contents and dump contents of data layer into json object
+# Upon parsing each invididual json object (which corresponds to invidiaul test) we get: test's code, price and name. Then we append date of scrapping
+# This web crawler can be put on schedule to automatically scrape web content on daily basis. 
+# Over time, we can track price & assortment changes, as well as compare this data across several labs.
+
+from bs4 import BeautifulSoup
+from random import shuffle
+import pandas as pd
+import requests
+import datetime
+import json
+import time
+from random import randint
+
+date_today = str(datetime.date.today())
+
+# Upper and lower time boundaries for sleep in-between requests
+sleep_start = 4
+sleep_end = 9
+
+# Clinica Sante
+def parse_sante_test(individual_test, date_today):
+    tmp_date = date_today
+    individual_test = json.loads(str(individual_test).split('<script type="application/ld+json">')[1].split('</script>')[0])
+    if "offers" in individual_test:
+        try:
+            tmp_code = individual_test['sku']
+        except:
+            tmp_code = "N/A"
+        
+        try:
+            tmp_name = individual_test['name']
+        except:
+            tmp_name = "N/A"
+        
+        try:
+            tmp_price = float(individual_test['offers']['price'].strip().split(".")[0].replace(" ",""))
+        except:
+            tmp_price = "N/A"
+    else:
+        tmp_date = date_today
+        tmp_code = "N/A"
+        tmp_name = "N/A"
+        tmp_price = "N/A"
+    
+    return (tmp_code, tmp_name, tmp_price, tmp_date)     
+
+def get_sante_data():
+    
+    # Initialize list & dictionaries
+    sante_dict = {}
+    sante_code = []
+    sante_name = []
+    sante_date = []
+    sante_price = []
+    
+    sante_base_url = requests.get('http://www.clinicasante.md/')
+    sante_base_soup = BeautifulSoup(sante_base_url.content, 'lxml')
+    # List comprehension to get all URLs from the page
+    sante_category_trash_urls = [a.get('href') for a in sante_base_soup.find_all('a', href=True)]
+    # After some investigation, turns out that links that we need containt "//www.clinicasante.md/servicii?first" substring
+    sante_category_good_urls=[i for i in sante_category_trash_urls if "//www.clinicasante.md/servicii?first" in i]
+    # Shuffle sequence of requested links to mimic human-like browsing behavior and prevent getting banned by ani-robot software
+    shuffle(sante_category_good_urls)
+    
+    for k in range(0,len(sante_category_good_urls)):
+        temp_url = sante_category_good_urls[k]
+        temp_req = requests.get(temp_url)
+        temp_soup = BeautifulSoup(temp_req.content, 'lxml')
+        temp_content = temp_soup.find_all('script', {"type":"application/ld+json"})
+        
+        for individual_test in temp_content:
+            # Method for iterating over contents of data layer and getting individual tests's information
+            code, name, price, date = parse_sante_test(individual_test, date_today)
+        
+            sante_code.append(code)
+            sante_name.append(name)
+            sante_price.append(price)
+            sante_date.append(date)
+        # Sleep function for "polite" scrapping without overloading server
+        time.sleep(randint(sleep_start,sleep_end))
+    
+    sante_dict['Code'] = sante_code
+    sante_dict['Test'] = sante_name
+    sante_dict['Price'] = sante_price
+    sante_dict['Date'] = sante_date
+    sante_df = pd.DataFrame(sante_dict)
+    
+    return sante_df
+
+# Main
+sante = get_sante_data()
+sante = sante.loc[sante['Code'] != 'N/A']
+sante['Laboratory']="Sante"
+print("Sante data pull has been completed!")
+
+# Most expensive lab test
+sante.loc[sante['Price'] == sante['Price'].max()]
