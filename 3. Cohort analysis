@@ -1,0 +1,35 @@
+from random import randint
+import pandas as pd
+from datetime import datetime
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Read csv with 'latin1' encoding to prevent getting UnicodeDecodeError
+raw_data = pd.read_csv('c://users/emereuta/desktop/SampleEcommerceData_Kaggle.csv', encoding='latin1')
+raw_data.dropna(how='any', inplace=True)
+
+# Original InvoiceDates belong to 2015 year only, which is slightly short for our analyses. 
+
+# Lets randomize dates to fall in 2015 - 2018 date range interval
+raw_data['InvoiceDate'] = raw_data['InvoiceDate'].apply(lambda x: datetime(randint(2015,2018), randint(1,12), randint(1,28)))
+raw_data.sort_values(by='InvoiceDate', ascending=True, inplace=True)
+raw_data['OrderValue'] = raw_data['Quantity'] * raw_data['UnitPrice']
+raw_data = raw_data.loc[raw_data['OrderValue'] > 0] # Keep rows with positive order value only
+
+# Calculate date of first purchase
+raw_data['FirstPurchaseDate']=raw_data.groupby('CustomerID')['InvoiceDate'].transform('min')
+
+raw_data['FirstPurchaseYear']=raw_data['FirstPurchaseDate'].dt.year # Determine the first year, rather than day, of customer's first purchase
+raw_data['InvoiceYear']=raw_data['InvoiceDate'].dt.year # Same as above
+raw_data=raw_data.groupby(['FirstPurchaseYear','InvoiceYear']).sum() # Group by data to track cohorts' purchases over years
+raw_data.reset_index(inplace=True)
+raw_data['FirstPurchaseYear'] = raw_data['FirstPurchaseYear'].apply(lambda x: "Cohort_"+str(x))
+
+pivot = pd.pivot_table(raw_data, index='InvoiceYear', columns='FirstPurchaseYear', values='OrderValue', aggfunc = np.sum)
+
+pivot.plot(kind='bar', stacked=True)
+plt.show()
+
+# Based on sample data set, it appears that customers acquired in 2015  (i.e. Cohort_2015) where the ones driving busines in subsequent year.
+# Roughly 10% of revenue earned in 2016 came from customers acquired in 2016, with Cohort 16's share fading away further in upcoming year.
+# I really like this analysis, because it shows you which type of customers is driving business in any given year: existing or new?
