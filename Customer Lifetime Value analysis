@@ -1,1 +1,77 @@
-# start
+from random import randint
+import pandas as pd
+from datetime import datetime
+
+# Read sample data set with 'latin1' encoding to prevent getting UnicodeDecodeError
+raw_data = pd.read_csv('c://users/emereuta/desktop/SampleEcommerceData_Kaggle.csv', encoding='latin1')
+raw_data.dropna(how='any', inplace=True)
+
+# Original InvoiceDates belong to 2015 year only, which is slightly short for our analyses. 
+
+# Lets randomize dates to fall in 2015 - 2018 date range interval
+raw_data['InvoiceDate'] = raw_data['InvoiceDate'].apply(lambda x: datetime(randint(2015,2018), randint(1,12), randint(1,28)))
+raw_data.sort_values(by='InvoiceDate', ascending=True, inplace=True)
+raw_data['OrderValue'] = raw_data['Quantity'] * raw_data['UnitPrice']
+raw_data = raw_data.loc[raw_data['OrderValue'] > 0] # Keep rows with positive order value only
+
+# For the purpose of Recency Frequency Monetary (RFM) analysis, we'll first group dataset by CustomerID
+# For each customer, Recency (days from last purchase until now), Frequency (# of orders per customers) and Monetary valua (total amoung of money each customer brought in) will be calculated
+# Next, will drop outliers and split each dimension in quartiles. 1st quartile contains best 25% of customers for respective dimension, 2nd best 25%-50% of customers, etc.
+# Combine quartile scores across 3 dimensions to get total RFM score. 
+# From interpretation standpoint, for example RFM segment "111" represents the best customers, buying recently, often and for large amounts.
+# Here we go!
+
+# RFM Analysis
+now = datetime.today()
+
+rfm_table = raw_data.groupby('CustomerID').agg({'InvoiceDate': lambda x: (now - x.max()).days, 'InvoiceNo': lambda x: len(x), 'OrderValue': lambda x: x.sum()})
+rfm_table.rename(columns={'InvoiceDate': 'Recency', 'InvoiceNo': 'Frequency', 'OrderValue': 'Monetary_value'}, inplace=True)
+
+rfm_table.reset_index(inplace=True)
+
+
+# Drop outliers for each column based on IQR*2.2 method
+for i in ['Monetary_value']:
+    
+    rfm_table.sort_values(by=[i], inplace=True)
+    q1 = rfm_table[i].quantile(0.25)
+    q3 = rfm_table[i].quantile(0.75)
+    iqr = q3 - q1
+    lower_boundary = q1 - 2.22*iqr
+    higher_boundary = q3 + 2.22*iqr
+    rfm_table = rfm_table.loc[(rfm_table[i]<=higher_boundary) & (rfm_table[i]>=lower_boundary)]
+
+def RScore(x,p,d):
+    if x <= d[p][0.25]:
+        return 1
+    elif x <= d[p][0.50]:
+        return 2
+    elif x <= d[p][0.75]: 
+        return 3
+    else:
+        return 4
+    
+def FMScore(x,p,d):
+    if x <= d[p][0.25]:
+        return 4
+    elif x <= d[p][0.50]:
+        return 3
+    elif x <= d[p][0.75]: 
+        return 2
+    else:
+        return 1
+quartiles = rfm_table.quantile(q=[0.25,0.5,0.75])
+quartiles = quartiles.to_dict()
+ 
+rfm_table['r_quartile'] = rfm_table['Recency'].apply(RScore, args=('Recency',quartiles,))
+rfm_table['f_quartile'] = rfm_table['Frequency'].apply(FMScore, args=('Frequency',quartiles,))
+rfm_table['m_quartile'] = rfm_table['Monetary_value'].apply(FMScore, args=('Monetary_value',quartiles,))
+rfm_table['RFMScore'] = rfm_table.r_quartile.map(str) + rfm_table.f_quartile.map(str)+ rfm_table.m_quartile.map(str)
+
+# Top 5 best customers.
+# -> Most profitable customer segment; keep a close eye on, maintain and cultivate relationships with them
+rfm_table.loc[rfm_table['RFMScore'] == "111"][:5]
+
+# Top 5 customers requiring reactivation (RFM segment x11, where x != 1). Segment used to bring a lot of value, but recently stopped purchasing from us
+# -> Engagement, reactivation & remarketing camapgins
+#rfm_table.loc[(rfm_table['r_quartile'] != 1) & (rfm_table['f_quartile'] == 1) & (rfm_table['m_quartile'] == 1)][:5]
